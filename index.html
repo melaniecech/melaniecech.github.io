@@ -1,2 +1,564 @@
-<h1>Hello World!</h1>
-<p>This is my first website.</p>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON ABYSS | Echo Protocol</title>
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #050713;
+  color: white;
+  font-family: Arial, sans-serif;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: crosshair;
+}
+
+#hud {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-shadow: 0 0 12px #00eeff;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 5, 18, .88);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 20px;
+}
+
+.panel {
+  max-width: 500px;
+  width: 100%;
+  padding: 35px 25px;
+  border: 1px solid #00d9ff66;
+  background: #0a1022e8;
+  box-shadow: 0 0 50px #00d9ff18;
+  border-radius: 18px;
+}
+
+h1 {
+  font-size: clamp(35px, 8vw, 65px);
+  margin: 0 0 10px;
+  letter-spacing: 5px;
+  color: #00eaff;
+  text-shadow: 0 0 25px #00eaff;
+}
+
+p {
+  color: #a7b9d5;
+  line-height: 1.7;
+}
+
+button {
+  background: #00d9ff;
+  color: #06101b;
+  border: none;
+  padding: 15px 35px;
+  margin-top: 15px;
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: .2s;
+}
+
+button:hover {
+  background: white;
+  box-shadow: 0 0 30px #00d9ff;
+  transform: scale(1.05);
+}
+
+.hidden { display: none !important; }
+
+#mobile {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  color: #91dfff;
+  font-size: 12px;
+  pointer-events: none;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div>
+    <div>NEON ABYSS</div>
+    <div id="health">ENERGY: 100</div>
+  </div>
+  <div style="text-align:right">
+    <div id="score">SCORE: 0</div>
+    <div id="level">WAVE: 1</div>
+    <div id="best">BEST: 0</div>
+  </div>
+</div>
+
+<div id="overlay">
+  <div class="panel">
+    <h1 id="title">NEON ABYSS</h1>
+    <p id="description">
+      You have entered a forgotten digital dimension.
+      Collect energy. Destroy corruption. Survive the abyss.
+    </p>
+    <p>
+      WASD / ARROWS — MOVE<br>
+      SPACE — ENERGY PULSE<br>
+      SHIFT — DASH
+    </p>
+    <button id="start">ENTER THE ABYSS</button>
+  </div>
+</div>
+
+<div id="mobile">MOBILE: USE THE SCREEN TO MOVE AND TAP TO PULSE</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let W, H;
+function resize() {
+  W = canvas.width = innerWidth * devicePixelRatio;
+  H = canvas.height = innerHeight * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  W = innerWidth;
+  H = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+const keys = {};
+let player, enemies, particles, crystals;
+let score = 0;
+let wave = 1;
+let running = false;
+let lastTime = 0;
+let spawnTimer = 0;
+let crystalTimer = 0;
+let pulseCooldown = 0;
+let dashCooldown = 0;
+let pulseRadius = 0;
+let shake = 0;
+let best = Number(localStorage.getItem("neonBest") || 0);
+
+document.getElementById("best").textContent = "BEST: " + best;
+
+function random(min,max) {
+  return Math.random() * (max-min) + min;
+}
+
+function distance(a,b) {
+  return Math.hypot(a.x-b.x,a.y-b.y);
+}
+
+function reset() {
+  player = {
+    x: W/2,
+    y: H/2,
+    radius: 12,
+    speed: 250,
+    hp: 100,
+    angle: 0,
+    invulnerable: 0,
+    dash: 0
+  };
+
+  enemies = [];
+  particles = [];
+  crystals = [];
+  score = 0;
+  wave = 1;
+  spawnTimer = 0;
+  crystalTimer = 0;
+  pulseCooldown = 0;
+  dashCooldown = 0;
+  pulseRadius = 0;
+}
+
+function burst(x,y,color,count=12) {
+  for(let i=0;i<count;i++) {
+    let a = random(0,Math.PI*2);
+    let s = random(40,230);
+    particles.push({
+      x,y,
+      vx:Math.cos(a)*s,
+      vy:Math.sin(a)*s,
+      life:random(.3,.8),
+      max:.8,
+      color,
+      size:random(2,5)
+    });
+  }
+}
+
+function spawnEnemy() {
+  let side = Math.floor(random(0,4));
+  let x = side===0 ? -20 : side===1 ? W+20 : random(0,W);
+  let y = side===2 ? -20 : side===3 ? H+20 : random(0,H);
+
+  enemies.push({
+    x,y,
+    radius:random(12,20),
+    speed:random(65,95)+wave*7,
+    hp:1,
+    color:Math.random()>.7 ? "#ff3d9a" : "#a15cff"
+  });
+}
+
+function spawnCrystal() {
+  crystals.push({
+    x:random(30,W-30),
+    y:random(30,H-30),
+    radius:8,
+    phase:random(0,6)
+  });
+}
+
+function pulse() {
+  if(!running || pulseCooldown>0) return;
+
+  pulseCooldown = 1.4;
+  pulseRadius = 1;
+  shake = 8;
+
+  burst(player.x,player.y,"#00eaff",30);
+
+  enemies.forEach(e => {
+    if(distance(player,e)<145) {
+      e.hp--;
+      let a = Math.atan2(e.y-player.y,e.x-player.x);
+      e.x += Math.cos(a)*55;
+      e.y += Math.sin(a)*55;
+
+      if(e.hp<=0) {
+        score += 15;
+        burst(e.x,e.y,e.color,16);
+        e.dead = true;
+      }
+    }
+  });
+
+  enemies = enemies.filter(e=>!e.dead);
+}
+
+function dash() {
+  if(!running || dashCooldown>0) return;
+
+  dashCooldown = 2;
+  player.dash = .2;
+  player.invulnerable = .3;
+
+  let dx = (keys["d"]||keys["arrowright"]?1:0) -
+           (keys["a"]||keys["arrowleft"]?1:0);
+  let dy = (keys["s"]||keys["arrowdown"]?1:0) -
+           (keys["w"]||keys["arrowup"]?1:0);
+
+  if(dx===0 && dy===0) dx=1;
+  let len = Math.hypot(dx,dy);
+  player.x += dx/len*100;
+  player.y += dy/len*100;
+
+  player.x = Math.max(15,Math.min(W-15,player.x));
+  player.y = Math.max(15,Math.min(H-15,player.y));
+
+  burst(player.x,player.y,"#00eaff",10);
+}
+
+function update(dt) {
+  if(!running) return;
+
+  pulseCooldown = Math.max(0,pulseCooldown-dt);
+  dashCooldown = Math.max(0,dashCooldown-dt);
+  player.invulnerable = Math.max(0,player.invulnerable-dt);
+  player.dash = Math.max(0,player.dash-dt);
+
+  let dx = (keys["d"]||keys["arrowright"]?1:0) -
+           (keys["a"]||keys["arrowleft"]?1:0);
+  let dy = (keys["s"]||keys["arrowdown"]?1:0) -
+           (keys["w"]||keys["arrowup"]?1:0);
+
+  let len = Math.hypot(dx,dy);
+  if(len>0) {
+    dx/=len;
+    dy/=len;
+    player.angle=Math.atan2(dy,dx);
+  }
+
+  let speed = player.dash>0 ? 650 : player.speed;
+  player.x += dx*speed*dt;
+  player.y += dy*speed*dt;
+
+  player.x = Math.max(12,Math.min(W-12,player.x));
+  player.y = Math.max(12,Math.min(H-12,player.y));
+
+  spawnTimer -= dt;
+  crystalTimer -= dt;
+
+  if(spawnTimer<=0) {
+    spawnEnemy();
+    spawnTimer = Math.max(.3,1.3-wave*.07);
+  }
+
+  if(crystalTimer<=0) {
+    spawnCrystal();
+    crystalTimer=4;
+  }
+
+  wave = 1 + Math.floor(score/150);
+
+  for(let e of enemies) {
+    let a = Math.atan2(player.y-e.y,player.x-e.x);
+    e.x += Math.cos(a)*e.speed*dt;
+    e.y += Math.sin(a)*e.speed*dt;
+
+    if(distance(player,e)<player.radius+e.radius) {
+      if(player.invulnerable<=0) {
+        player.hp -= 15;
+        player.invulnerable=.8;
+        shake=12;
+        burst(player.x,player.y,"#ff3d6e",12);
+      }
+    }
+  }
+
+  for(let c of crystals) {
+    c.phase += dt*3;
+    if(distance(player,c)<25) {
+      score += 25;
+      player.hp = Math.min(100,player.hp+5);
+      burst(c.x,c.y,"#ffe66d",15);
+      c.dead=true;
+    }
+  }
+
+  crystals = crystals.filter(c=>!c.dead);
+
+  for(let p of particles) {
+    p.x += p.vx*dt;
+    p.y += p.vy*dt;
+    p.vx *= .96;
+    p.vy *= .96;
+    p.life -= dt;
+  }
+
+  particles = particles.filter(p=>p.life>0);
+
+  if(pulseRadius>0) pulseRadius += 700*dt;
+  if(pulseRadius>145) pulseRadius=0;
+
+  shake *= .85;
+
+  if(player.hp<=0) gameOver();
+
+  document.getElementById("score").textContent="SCORE: "+score;
+  document.getElementById("health").textContent="ENERGY: "+Math.max(0,player.hp);
+  document.getElementById("level").textContent="WAVE: "+wave;
+}
+
+function drawGrid() {
+  ctx.strokeStyle="#101a32";
+  ctx.lineWidth=1;
+
+  for(let x=0;x<W;x+=50) {
+    ctx.beginPath();
+    ctx.moveTo(x,0);
+    ctx.lineTo(x,H);
+    ctx.stroke();
+  }
+
+  for(let y=0;y<H;y+=50) {
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(W,y);
+    ctx.stroke();
+  }
+}
+
+function glowCircle(x,y,r,color,glow) {
+  ctx.save();
+  ctx.shadowBlur=glow;
+  ctx.shadowColor=color;
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.arc(x,y,r,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#050713";
+  ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  ctx.translate(random(-shake,shake),random(-shake,shake));
+
+  drawGrid();
+
+  // Crystals
+  for(let c of crystals) {
+    let r=c.radius+Math.sin(c.phase)*2;
+    ctx.save();
+    ctx.translate(c.x,c.y);
+    ctx.rotate(c.phase);
+    ctx.shadowBlur=20;
+    ctx.shadowColor="#ffe66d";
+    ctx.fillStyle="#ffe66d";
+    ctx.fillRect(-r/2,-r/2,r,r);
+    ctx.restore();
+  }
+
+  // Enemies
+  for(let e of enemies) {
+    glowCircle(e.x,e.y,e.radius,e.color,25);
+    ctx.strokeStyle="#ffffff";
+    ctx.globalAlpha=.5;
+    ctx.beginPath();
+    ctx.arc(e.x,e.y,e.radius+5,0,Math.PI*2);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+
+  // Player
+  if(player) {
+    ctx.save();
+    ctx.translate(player.x,player.y);
+    ctx.rotate(player.angle);
+    ctx.shadowBlur=25;
+    ctx.shadowColor="#00eaff";
+    ctx.fillStyle=player.invulnerable>0 ? "#ffffff" : "#00eaff";
+    ctx.beginPath();
+    ctx.moveTo(18,0);
+    ctx.lineTo(-12,-11);
+    ctx.lineTo(-7,0);
+    ctx.lineTo(-12,11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    if(pulseRadius>0) {
+      ctx.beginPath();
+      ctx.arc(player.x,player.y,pulseRadius,0,Math.PI*2);
+      ctx.strokeStyle="#00eaff";
+      ctx.lineWidth=3;
+      ctx.globalAlpha=.7;
+      ctx.stroke();
+      ctx.globalAlpha=1;
+    }
+  }
+
+  // Particles
+  for(let p of particles) {
+    ctx.globalAlpha=Math.max(0,p.life/p.max);
+    glowCircle(p.x,p.y,p.size,p.color,12);
+  }
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+}
+
+function loop(time) {
+  let dt=Math.min((time-lastTime)/1000,.033);
+  lastTime=time;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function gameOver() {
+  running=false;
+
+  if(score>best) {
+    best=score;
+    localStorage.setItem("neonBest",best);
+  }
+
+  document.getElementById("best").textContent="BEST: "+best;
+  document.getElementById("title").textContent="SYSTEM FAILURE";
+  document.getElementById("description").innerHTML=
+    "Your signal has disappeared into the abyss.<br><br>"+
+    "FINAL SCORE: <b>"+score+"</b><br>"+
+    "WAVE REACHED: <b>"+wave+"</b>";
+
+  document.getElementById("start").textContent="TRY AGAIN";
+  document.getElementById("overlay").classList.remove("hidden");
+}
+
+function startGame() {
+  reset();
+  running=true;
+  document.getElementById("overlay").classList.add("hidden");
+}
+
+document.getElementById("start").addEventListener("click",startGame);
+
+addEventListener("keydown",e=>{
+  keys[e.key.toLowerCase()]=true;
+
+  if([" ","arrowup","arrowdown","arrowleft","arrowright"].includes(e.key.toLowerCase()))
+    e.preventDefault();
+
+  if(e.code==="Space") pulse();
+  if(e.key==="Shift") dash();
+});
+
+addEventListener("keyup",e=>{
+  keys[e.key.toLowerCase()]=false;
+});
+
+// Basic mobile controls
+let touchStart=null;
+
+canvas.addEventListener("pointerdown",e=>{
+  if(!running) return;
+  touchStart={x:e.clientX,y:e.clientY};
+  pulse();
+});
+
+canvas.addEventListener("pointermove",e=>{
+  if(!touchStart || !running) return;
+  let dx=e.clientX-touchStart.x;
+  let dy=e.clientY-touchStart.y;
+
+  keys["d"]=dx>12;
+  keys["a"]=dx<-12;
+  keys["s"]=dy>12;
+  keys["w"]=dy<-12;
+});
+
+canvas.addEventListener("pointerup",()=>{
+  touchStart=null;
+  keys["w"]=keys["a"]=keys["s"]=keys["d"]=false;
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
+
+
